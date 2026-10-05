@@ -1,0 +1,7 @@
+node_modules/
+pgvector/
+superset-custom/superset/
+superset_home/
+*.log
+.env
+frontend.bak/

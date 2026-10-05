@@ -1,0 +1,297 @@
+import React, { useState, useEffect, useCallback } from 'react';
+import toast from 'react-hot-toast';
+import api from '../utils/api';
+
+function Section({ title, icon, children }) {
+  return (
+    <div style={{ background: '#fff', borderRadius: 14, border: '1.5px solid #e8eaf6', overflow: 'hidden', marginBottom: 16, boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
+      <div style={{ padding: '14px 16px', borderBottom: '1px solid #f3f4f6', display: 'flex', alignItems: 'center', gap: 10 }}>
+        <span style={{ fontSize: 18 }}>{icon}</span>
+        <h2 style={{ fontSize: 15, fontWeight: 700, color: '#111827' }}>{title}</h2>
+      </div>
+      <div style={{ padding: 16 }}>{children}</div>
+      {/* Téléchargement global */}
+      <div style={{ background: '#fff', border: '1.5px solid #e8eaf6', borderRadius: 14, padding: 20, marginBottom: 16 }}>
+        <h2 style={{ fontSize: 15, fontWeight: 700, color: '#111827', marginBottom: 4 }}>⬇️ Téléchargement PDF — Global</h2>
+        <p style={{ fontSize: 12, color: '#6b7280', marginBottom: 16 }}>
+          Autoriser ou bloquer le téléchargement pour <strong>tous les membres</strong> en une seule action.
+        </p>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+          <button onClick={async () => {
+            if (!window.confirm('Autoriser le téléchargement pour TOUS les membres ?')) return;
+            try {
+              await api.post('/members/global/set-download', { allow: true });
+              toast.success('✅ Téléchargement autorisé pour tous');
+            } catch { toast.error('Erreur'); }
+          }} style={{ padding: '12px 8px', borderRadius: 10, border: '1.5px solid #fcd34d', background: '#fffbeb', fontSize: 12, fontWeight: 700, cursor: 'pointer', color: '#d97706' }}>
+            ✅ Autoriser tous
+          </button>
+          <button onClick={async () => {
+            if (!window.confirm('Bloquer le téléchargement pour TOUS les membres ?')) return;
+            try {
+              await api.post('/members/global/set-download', { allow: false });
+              toast.success('🚫 Téléchargement bloqué pour tous');
+            } catch { toast.error('Erreur'); }
+          }} style={{ padding: '12px 8px', borderRadius: 10, border: '1.5px solid #fca5a5', background: '#fff5f5', fontSize: 12, fontWeight: 700, cursor: 'pointer', color: '#dc2626' }}>
+            🚫 Bloquer tous
+          </button>
+        </div>
+      </div>
+
+      {/* PIN global */}
+      <div style={{ background: '#fff', border: '1.5px solid #e8eaf6', borderRadius: 14, padding: 20, marginBottom: 16 }}>
+        <h2 style={{ fontSize: 15, fontWeight: 700, color: '#111827', marginBottom: 4 }}>🔑 PIN — Envoi global</h2>
+        <p style={{ fontSize: 12, color: '#6b7280', marginBottom: 16 }}>
+          Générer un code PIN aléatoire unique pour <strong>chaque membre actif</strong> et l'envoyer par email automatiquement.
+        </p>
+        <div style={{ background: '#eff6ff', border: '1.5px solid #93c5fd', borderRadius: 10, padding: 12, marginBottom: 14, fontSize: 12, color: '#1e40af' }}>
+          ℹ️ Chaque membre recevra un PIN différent et unique par email. Les anciens PINs seront remplacés.
+        </div>
+        <button onClick={async () => {
+          if (!window.confirm('Générer et envoyer un PIN par email à TOUS les membres actifs ? Cette action remplace les PINs existants.')) return;
+          try {
+            toast.loading('Envoi en cours...', { id: 'pins' });
+            const { data } = await api.post('/members/global/send-pins');
+            toast.success(data.sent + ' PINs envoyés sur ' + data.total + ' membres', { id: 'pins', duration: 6000 });
+            if (data.errors?.length > 0) toast.error('Erreurs: ' + data.errors.join(', '));
+          } catch { toast.error('Erreur envoi PINs', { id: 'pins' }); }
+        }} style={{ width: '100%', padding: '13px 16px', borderRadius: 10, border: 'none', background: 'linear-gradient(135deg, #6366f1, #4f46e5)', color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
+          📧 Générer et envoyer les PINs par email
+        </button>
+      </div>
+
+      {/* Danger Zone */}
+    </div>
+  );
+}
+
+export default function SettingsPage() {
+  const [members, setMembers] = useState([]);
+  const [stats, setStats] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [adminPassword, setAdminPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [savingPwd, setSavingPwd] = useState(false);
+  const [baseUrl, setBaseUrl] = useState('https://doctracker.monairbyte.eu');
+  const [confirmDelete, setConfirmDelete] = useState('');
+
+  const fetchData = useCallback(async () => {
+    try {
+      const [m, s] = await Promise.all([api.get('/members'), api.get('/track/stats')]);
+      setMembers(m.data);
+      setStats(s.data);
+    } catch {} finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { fetchData(); }, [fetchData]);
+
+  // ── Révoquer accès membre ──────────────────────────────
+  const handleRevoke = async (id, name, currentAllowed) => {
+    const action = currentAllowed ? 'révoquer' : 'rétablir';
+    if (!window.confirm(`Voulez-vous ${action} l'accès de ${name} ?`)) return;
+    try {
+      await api.post(`/members/${id}/revoke`, { revoked: currentAllowed });
+      toast.success(`Accès ${currentAllowed ? 'révoqué' : 'rétabli'} pour ${name}`);
+      fetchData();
+    } catch { toast.error('Erreur'); }
+  };
+
+  // ── Reset appareil membre ──────────────────────────────
+  const handleResetDevice = async (id, name) => {
+    if (!window.confirm(`Réinitialiser l'appareil enregistré de ${name} ?`)) return;
+    try {
+      await api.post(`/members/${id}/reset-device`);
+      toast.success(`Appareil réinitialisé pour ${name}`);
+      fetchData();
+    } catch { toast.error('Erreur'); }
+  };
+
+  // ── Supprimer historique d'un membre ──────────────────
+  const handleDeleteMemberHistory = async (id, name) => {
+    if (!window.confirm(`Supprimer tout l'historique de ${name} ? Cette action est irréversible.`)) return;
+    try {
+      await api.delete(`/settings/member-history/${id}`);
+      toast.success(`Historique supprimé pour ${name}`);
+      fetchData();
+    } catch { toast.error('Erreur'); }
+  };
+
+  // ── Supprimer toutes les alertes ──────────────────────
+  const handleClearAlerts = async () => {
+    if (!window.confirm('Supprimer toutes les alertes ?')) return;
+    try {
+      await api.delete('/settings/all-alerts');
+      toast.success('Toutes les alertes supprimées');
+    } catch { toast.error('Erreur'); }
+  };
+
+  // ── Supprimer tout l'historique ───────────────────────
+  const handleClearAllHistory = async () => {
+    if (confirmDelete !== 'SUPPRIMER') {
+      toast.error('Tapez SUPPRIMER pour confirmer');
+      return;
+    }
+    try {
+      await api.delete('/settings/all-history');
+      toast.success('Historique complet supprimé');
+      setConfirmDelete('');
+      fetchData();
+    } catch { toast.error('Erreur'); }
+  };
+
+  // ── Supprimer tous les membres ────────────────────────
+  const handleClearAllMembers = async () => {
+    if (!window.confirm('Supprimer TOUS les membres et leurs données ? Action irréversible.')) return;
+    try {
+      await api.delete('/settings/all-members');
+      toast.success('Tous les membres supprimés');
+      fetchData();
+    } catch { toast.error('Erreur'); }
+  };
+
+  // ── Changer mot de passe admin ────────────────────────
+  const handleChangePassword = async (e) => {
+    e.preventDefault();
+    if (!newPassword || newPassword.length < 6) { toast.error('Mot de passe trop court (min 6 car.)'); return; }
+    setSavingPwd(true);
+    try {
+      await api.post('/settings/change-password', { currentPassword: adminPassword, newPassword });
+      toast.success('Mot de passe mis à jour');
+      setAdminPassword(''); setNewPassword('');
+    } catch (err) { toast.error(err.response?.data?.error || 'Erreur'); }
+    finally { setSavingPwd(false); }
+  };
+
+  // ── Régénérer tous les liens ──────────────────────────
+  const handleRegenAllTokens = async () => {
+    if (!window.confirm('Régénérer les liens de TOUS les membres ? Les anciens liens ne fonctionneront plus.')) return;
+    try {
+      let count = 0;
+      for (const m of members) {
+        await api.post(`/members/${m.id}/regenerate-token`);
+        count++;
+      }
+      toast.success(`${count} liens régénérés`);
+      fetchData();
+    } catch { toast.error('Erreur'); }
+  };
+
+  return (
+    <div style={{ padding: 16, background: '#f8f9fc', minHeight: '100vh' }}>
+      <div style={{ marginBottom: 20 }}>
+        <h1 style={{ fontSize: 20, fontWeight: 800, color: '#111827' }}>Paramètres</h1>
+        <p style={{ color: '#9ca3af', fontSize: 12, marginTop: 2 }}>Gérez les accès, données et configuration</p>
+      </div>
+
+      {/* ── Stats rapides ── */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10, marginBottom: 16 }}>
+        {[
+          { label: 'Membres', value: stats?.totalMembers || 0, icon: '👥' },
+          { label: 'Événements', value: stats?.totalEvents || 0, icon: '📋' },
+          { label: 'Téléchargements', value: stats?.totalDownloads || 0, icon: '⬇️', danger: stats?.totalDownloads > 0 },
+          { label: 'Accès refusés', value: stats?.totalUnauthorized || 0, icon: '⛔' },
+        ].map((s, i) => (
+          <div key={i} style={{ background: s.danger ? '#fff5f5' : '#fff', border: `1.5px solid ${s.danger ? '#fca5a5' : '#e8eaf6'}`, borderRadius: 12, padding: '12px 14px' }}>
+            <div style={{ fontSize: 18, marginBottom: 4 }}>{s.icon}</div>
+            <div style={{ fontSize: 20, fontWeight: 800, color: s.danger ? '#dc2626' : '#6366f1' }}>{s.value}</div>
+            <div style={{ fontSize: 11, color: '#6b7280' }}>{s.label}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* ── Gestion accès membres ── */}
+      <Section title="Accès membres" icon="🔐">
+        {loading ? <div style={{ color: '#9ca3af', fontSize: 13 }}>Chargement...</div> :
+        members.length === 0 ? <div style={{ color: '#9ca3af', fontSize: 13 }}>Aucun membre</div> :
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {members.map(m => (
+            <div key={m.id} style={{
+              background: '#f9fafb', borderRadius: 10, padding: '10px 12px',
+              display: 'flex', alignItems: 'center', gap: 10,
+              border: m.access_allowed === false ? '1.5px solid #fca5a5' : '1px solid #f3f4f6'
+            }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: '#111827' }}>{m.name}</div>
+                <div style={{ fontSize: 11, color: '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.email}</div>
+                <div style={{ display: 'flex', gap: 6, marginTop: 4, flexWrap: 'wrap' }}>
+                  <span style={{ background: m.access_allowed === false ? '#fee2e2' : '#d1fae5', color: m.access_allowed === false ? '#dc2626' : '#065f46', borderRadius: 999, padding: '1px 8px', fontSize: 10, fontWeight: 700 }}>
+                    {m.access_allowed === false ? '🔒 Révoqué' : '✅ Actif'}
+                  </span>
+                  <span style={{ background: '#e0e7ff', color: '#3730a3', borderRadius: 999, padding: '1px 8px', fontSize: 10, fontWeight: 700 }}>
+                    v{m.version}
+                  </span>
+                  <span style={{ background: '#f3f4f6', color: '#374151', borderRadius: 999, padding: '1px 8px', fontSize: 10 }}>
+                    {m.total_opens} ouv.
+                  </span>
+                </div>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 5, flexShrink: 0 }}>
+                <button onClick={() => handleRevoke(m.id, m.name, m.access_allowed !== false)} style={{
+                  padding: '5px 10px', borderRadius: 8, border: 'none', fontSize: 11, fontWeight: 600, cursor: 'pointer',
+                  background: m.access_allowed === false ? '#d1fae5' : '#fee2e2',
+                  color: m.access_allowed === false ? '#065f46' : '#dc2626'
+                }}>
+                  {m.access_allowed === false ? '✅ Rétablir' : '🔒 Révoquer'}
+                </button>
+                <button onClick={() => handleResetDevice(m.id, m.name)} style={{
+                  padding: '5px 10px', borderRadius: 8, border: '1px solid #e5e7eb', background: '#fff', fontSize: 11, fontWeight: 600, cursor: 'pointer', color: '#374151'
+                }}>
+                  🔄 Reset OTP
+                </button>
+                <button onClick={() => handleDeleteMemberHistory(m.id, m.name)} style={{
+                  padding: '5px 10px', borderRadius: 8, border: '1px solid #fca5a5', background: '#fff5f5', fontSize: 11, fontWeight: 600, cursor: 'pointer', color: '#dc2626'
+                }}>
+                  🗑 Historique
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>}
+        <button onClick={handleRegenAllTokens} style={{ marginTop: 12, width: '100%', padding: '10px', borderRadius: 10, border: '1.5px solid #e5e7eb', background: '#fff', fontWeight: 600, fontSize: 13, cursor: 'pointer', color: '#374151' }}>
+          🔄 Régénérer tous les liens
+        </button>
+      </Section>
+
+      {/* ── Mot de passe admin ── */}
+      <Section title="Mot de passe admin" icon="🔑">
+        <form onSubmit={handleChangePassword}>
+          <div style={{ marginBottom: 10 }}>
+            <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#374151', marginBottom: 5 }}>Mot de passe actuel</label>
+            <input type="password" value={adminPassword} onChange={e => setAdminPassword(e.target.value)} placeholder="••••••••" required
+              style={{ width: '100%', padding: '10px 14px', borderRadius: 10, border: '1.5px solid #e5e7eb', fontSize: 14, outline: 'none', color: '#111827' }} />
+          </div>
+          <div style={{ marginBottom: 14 }}>
+            <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#374151', marginBottom: 5 }}>Nouveau mot de passe</label>
+            <input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} placeholder="Min. 6 caractères" required
+              style={{ width: '100%', padding: '10px 14px', borderRadius: 10, border: '1.5px solid #e5e7eb', fontSize: 14, outline: 'none', color: '#111827' }} />
+          </div>
+          <button type="submit" disabled={savingPwd} style={{ width: '100%', padding: '11px', borderRadius: 10, border: 'none', background: '#6366f1', color: '#fff', fontWeight: 700, fontSize: 14, cursor: 'pointer', opacity: savingPwd ? 0.6 : 1 }}>
+            {savingPwd ? 'Enregistrement...' : '💾 Changer le mot de passe'}
+          </button>
+        </form>
+      </Section>
+
+      {/* ── Suppression données ── */}
+      <Section title="Suppression de données" icon="🗑">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <button onClick={handleClearAlerts} style={{ padding: '11px', borderRadius: 10, border: '1.5px solid #fcd34d', background: '#fffbeb', fontWeight: 600, fontSize: 13, cursor: 'pointer', color: '#92400e' }}>
+            🔔 Supprimer toutes les alertes
+          </button>
+          <div>
+            <div style={{ marginBottom: 8 }}>
+              <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#dc2626', marginBottom: 5 }}>
+                Supprimer tout l'historique des événements
+              </label>
+              <input value={confirmDelete} onChange={e => setConfirmDelete(e.target.value)} placeholder="Tapez SUPPRIMER pour confirmer"
+                style={{ width: '100%', padding: '10px 14px', borderRadius: 10, border: '1.5px solid #fca5a5', fontSize: 13, outline: 'none', marginBottom: 8, color: '#111827' }} />
+              <button onClick={handleClearAllHistory} style={{ width: '100%', padding: '11px', borderRadius: 10, border: 'none', background: '#ef4444', color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>
+                🗑 Supprimer tout l'historique
+              </button>
+            </div>
+          </div>
+          <button onClick={handleClearAllMembers} style={{ padding: '11px', borderRadius: 10, border: '1.5px solid #fca5a5', background: '#fff5f5', fontWeight: 600, fontSize: 13, cursor: 'pointer', color: '#dc2626' }}>
+            👥 Supprimer tous les membres
+          </button>
+        </div>
+      </Section>
+}

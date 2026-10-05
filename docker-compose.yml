@@ -1,0 +1,86 @@
+version: '3.9'
+
+services:
+
+  doctracker-saas-db:
+    image: postgres:16-alpine
+    container_name: doctracker-saas-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       ${PG_DATABASE:-doctracker_saas}
+      POSTGRES_USER:     ${PG_USER:-doctracker_saas}
+      POSTGRES_PASSWORD: ${PG_PASSWORD}
+    volumes:
+      - doctracker_saas_db:/var/lib/postgresql/data
+    networks:
+      - saas-internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PG_USER:-doctracker_saas}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  doctracker-saas-backend:
+    build:
+      context: ./backend
+    container_name: doctracker-saas-backend
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      NODE_ENV:       production
+      PORT:           4000
+      PG_HOST:        doctracker-saas-db
+      PG_PORT:        5432
+      PG_DATABASE:    ${PG_DATABASE:-doctracker_saas}
+      PG_USER:        ${PG_USER:-doctracker_saas}
+      PG_PASSWORD:    ${PG_PASSWORD}
+      FRONTEND_URL:   https://${SAAS_DOMAIN:-saas.doctracker.monairbyte.eu}
+      APP_URL:        https://${SAAS_DOMAIN:-saas.doctracker.monairbyte.eu}
+    volumes:
+      - doctracker_saas_uploads:/app/uploads
+    depends_on:
+      doctracker-saas-db:
+        condition: service_healthy
+    networks:
+      - saas-internal
+      - web
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=web"
+      - "traefik.http.routers.dt-saas-api.rule=Host(`${SAAS_DOMAIN:-saas.doctracker.monairbyte.eu}`) && PathPrefix(`/api`)"
+      - "traefik.http.routers.dt-saas-api.entrypoints=websecure"
+      - "traefik.http.routers.dt-saas-api.tls.certresolver=mytlschallenge"
+      - "traefik.http.routers.dt-saas-api.service=dt-saas-api-svc"
+      - "traefik.http.routers.dt-saas-api.priority=100"
+      - "traefik.http.services.dt-saas-api-svc.loadbalancer.server.port=4000"
+
+  doctracker-saas-frontend:
+    build:
+      context: ./frontend
+      args:
+        REACT_APP_API_URL: /api
+    container_name: doctracker-saas-frontend
+    restart: unless-stopped
+    depends_on:
+      - doctracker-saas-backend
+    networks:
+      - web
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=web"
+      - "traefik.http.routers.dt-saas-front.rule=Host(`${SAAS_DOMAIN:-saas.doctracker.monairbyte.eu}`)"
+      - "traefik.http.routers.dt-saas-front.entrypoints=websecure"
+      - "traefik.http.routers.dt-saas-front.tls.certresolver=mytlschallenge"
+      - "traefik.http.routers.dt-saas-front.service=dt-saas-front-svc"
+      - "traefik.http.routers.dt-saas-front.priority=1"
+      - "traefik.http.services.dt-saas-front-svc.loadbalancer.server.port=80"
+
+volumes:
+  doctracker_saas_db:
+  doctracker_saas_uploads:
+
+networks:
+  saas-internal:
+    driver: bridge
+  web:
+    external: true
