@@ -4,8 +4,8 @@ const path    = require('path');
 const fs      = require('fs');
 const { query } = require('../db');
 const { requireAuth, requireRole } = require('../middleware/auth');
-const { sendAccessEmail } = require('../services/email');
-const { processPDF } = require('../services/pdf');
+const { sendAccessEmail } = require('../utils/mailer');
+const { processPDF } = require('../utils/watermark');
 
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, '../../uploads');
 

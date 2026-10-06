@@ -4,7 +4,7 @@ const jwt     = require('jsonwebtoken');
 const crypto  = require('crypto');
 const { query }     = require('../db');
 const { requireAuth, requireRole } = require('../middleware/auth');
-const { sendOTP, sendInvitation } = require('../services/email');
+const { sendOTP, sendInvitation } = require('../utils/mailer');
 
 const SALT_ROUNDS = 12;
 const slugify = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
@@ -225,4 +225,17 @@ router.post('/alert-settings', requireAuth, requireRole('owner', 'admin'), async
     );
     res.json({ success: true });
   } catch(err) { res.status(500).json({ error: err.message }); }
+});
+
+router.put('/change-password', requireAuth, async (req, res) => {
+  try {
+    const { current_password, new_password } = req.body;
+    const bcrypt = require('bcrypt');
+    const { rows } = await query('SELECT password_hash FROM users WHERE id=$1', [req.user.id]);
+    const valid = await bcrypt.compare(current_password, rows[0].password_hash);
+    if(!valid) return res.status(401).json({ error: 'Mot de passe actuel incorrect' });
+    const hash = await bcrypt.hash(new_password, 10);
+    await query('UPDATE users SET password_hash=$1 WHERE id=$2', [hash, req.user.id]);
+    res.json({ success: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });

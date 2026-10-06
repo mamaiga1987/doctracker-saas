@@ -29,7 +29,7 @@ export function AuthProvider({ children }) {
     if (!token) { setLoading(false); return; }
     apiFetch('/auth/me')
       .then(({ user, organization }) => { setUser(user); setOrg(organization); })
-      .catch(() => { localStorage.removeItem('dt_token'); setToken(null); })
+      .catch((e) => { console.error('AUTH FAIL:', e.message, e.response?.status, e.response?.data); localStorage.removeItem('dt_token'); setToken(null); })
       .finally(() => setLoading(false));
   }, [token, apiFetch]);
 

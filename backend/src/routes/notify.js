@@ -1,5 +1,5 @@
 const router = require('express').Router();
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, requireRole } = require('../middleware/auth');
 const { query } = require('../db');
 const nodemailer = require('nodemailer');
 
@@ -13,69 +13,60 @@ const getTransporter = () => nodemailer.createTransport({
 router.get('/', requireAuth, async (req, res) => {
   try {
     const { rows } = await query(
-      'SELECT * FROM document_shares WHERE organization_id=$1 ORDER BY created_at DESC LIMIT 100',
+      'SELECT ds.*,d.title,d.original_name,r.name as recipient_name FROM document_shares ds LEFT JOIN documents d ON d.id=ds.document_id LEFT JOIN recipients r ON r.id=ds.recipient_id WHERE ds.organization_id=$1 ORDER BY ds.created_at DESC LIMIT 50',
       [req.user.organization_id]
     );
     res.json(rows);
   } catch(e) { res.json([]); }
 });
 
-router.post('/send', requireAuth, async (req, res) => {
+router.post('/send-bulk', requireAuth, async (req, res) => {
   try {
-    const { member_ids, document_id, message } = req.body;
-    const orgId = req.user.organization_id;
-    const doc = await query('SELECT * FROM documents WHERE id=$1 AND organization_id=$2', [document_id, orgId]);
-    if(!doc.rows.length) return res.status(404).json({ error: 'Document non trouvé' });
-    const results = [];
+    const { member_ids, customMessage } = req.body;
     const transporter = getTransporter();
-    for(const memberId of member_ids) {
-      const member = await query('SELECT * FROM recipients WHERE id=$1 AND organization_id=$2', [memberId, orgId]);
-      if(!member.rows.length) continue;
-      const m = member.rows[0];
-      const crypto = require('crypto');
-      const token = crypto.randomBytes(32).toString('hex');
-      const expiresAt = new Date(Date.now() + 7 * 24 * 3600 * 1000);
-      await query(
-        'INSERT INTO document_shares (document_id, member_id, organization_id, token, expires_at) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING',
-        [document_id, memberId, orgId, token, expiresAt]
-      );
-      const viewUrl = `${process.env.APP_URL || 'https://saas.doctracker.monairbyte.eu'}/view/${token}`;
-      if(m.email) {
-        try {
-          await transporter.sendMail({
-            from: process.env.SMTP_FROM || 'DocTracker',
-            to: m.email,
-            subject: `📄 ${doc.rows[0].title || doc.rows[0].original_name}`,
-            html: `<p>Bonjour ${m.name},</p><p>${message || 'Veuillez consulter ce document.'}</p><p><a href="${viewUrl}" style="background:#6366f1;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none">Voir le document</a></p>`
-          });
-        } catch(mailErr) { console.log('Email erreur:', mailErr.message); }
-      }
-      results.push({ member: m.name, email: m.email, token, viewUrl });
+    let sent = 0;
+    for(const memberId of member_ids||[]) {
+      const { rows } = await query('SELECT * FROM recipients WHERE id=$1 AND organization_id=$2', [memberId, req.user.organization_id]);
+      if(!rows.length || !rows[0].email) continue;
+      const m = rows[0];
+      const share = await query('SELECT ds.*,d.title,d.original_name FROM document_shares ds LEFT JOIN documents d ON d.id=ds.document_id WHERE ds.recipient_id=$1 AND ds.organization_id=$2 ORDER BY ds.created_at DESC LIMIT 1', [memberId, req.user.organization_id]);
+      const viewUrl = share.rows.length ? `${process.env.APP_URL||'https://saas.doctracker.monairbyte.eu'}/view/${share.rows[0].token}` : '#';
+      const docTitle = share.rows.length ? (share.rows[0].title||share.rows[0].original_name) : 'Document';
+      try {
+        await transporter.sendMail({ from: process.env.SMTP_FROM||'DocTracker', to: m.email, subject: `📄 ${docTitle}`, html: `<p>Bonjour ${m.name},</p>${customMessage?`<p>${customMessage}</p>`:''}<p><a href="${viewUrl}" style="background:#6366f1;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none">📄 Accéder au document</a></p>` });
+        sent++;
+      } catch(e) {}
     }
-    res.json({ success: true, sent: results.length, results });
+    res.json({ success: true, sent });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/send-link/:memberId', requireAuth, async (req, res) => {
+  try {
+    const { customMessage } = req.body;
+    const { rows } = await query('SELECT * FROM recipients WHERE id=$1 AND organization_id=$2', [req.params.memberId, req.user.organization_id]);
+    if(!rows.length || !rows[0].email) return res.status(400).json({ error: 'Pas d\'email' });
+    const m = rows[0];
+    const share = await query('SELECT ds.*,d.title,d.original_name FROM document_shares ds LEFT JOIN documents d ON d.id=ds.document_id WHERE ds.recipient_id=$1 AND ds.organization_id=$2 ORDER BY ds.created_at DESC LIMIT 1', [req.params.memberId, req.user.organization_id]);
+    const viewUrl = share.rows.length ? `${process.env.APP_URL||'https://saas.doctracker.monairbyte.eu'}/view/${share.rows[0].token}` : '#';
+    const docTitle = share.rows.length ? (share.rows[0].title||share.rows[0].original_name) : 'Document';
+    const transporter = getTransporter();
+    await transporter.sendMail({ from: process.env.SMTP_FROM||'DocTracker', to: m.email, subject: `📄 ${docTitle}`, html: `<p>Bonjour ${m.name},</p>${customMessage?`<p>${customMessage}</p>`:''}<p><a href="${viewUrl}" style="background:#6366f1;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none">📄 Accéder au document</a></p>` });
+    res.json({ success: true });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 router.post('/send-otp', requireAuth, async (req, res) => {
   try {
     const { member_id } = req.body;
-    const orgId = req.user.organization_id;
-    const member = await query('SELECT * FROM recipients WHERE id=$1 AND organization_id=$2', [member_id, orgId]);
-    if(!member.rows.length) return res.status(404).json({ error: 'Membre non trouvé' });
-    const m = member.rows[0];
+    const { rows } = await query('SELECT * FROM recipients WHERE id=$1 AND organization_id=$2', [member_id, req.user.organization_id]);
+    if(!rows.length || !rows[0].email) return res.status(400).json({ error: 'Membre introuvable' });
+    const m = rows[0];
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    const expiresAt = new Date(Date.now() + 3600 * 1000);
-    await query('UPDATE recipients SET otp_code=$1, otp_expires=$2 WHERE id=$3', [otp, expiresAt, member_id]);
-    if(m.email) {
-      const transporter = getTransporter();
-      await transporter.sendMail({
-        from: process.env.SMTP_FROM || 'DocTracker',
-        to: m.email,
-        subject: `🔐 Votre code d'accès : ${otp}`,
-        html: `<p>Bonjour ${m.name},</p><p>Code : <strong style="font-size:24px">${otp}</strong></p><p>Expire dans 1 heure.</p>`
-      });
-    }
-    res.json({ success: true, otp });
+    await query('UPDATE recipients SET otp_code=$1, otp_expires=$2 WHERE id=$3', [otp, new Date(Date.now()+3600000), member_id]);
+    const transporter = getTransporter();
+    await transporter.sendMail({ from: process.env.SMTP_FROM||'DocTracker', to: m.email, subject: `🔐 Code OTP: ${otp}`, html: `<p>Bonjour ${m.name},</p><p>Code OTP: <strong style="font-size:28px">${otp}</strong></p><p>Expire dans 1 heure.</p>` });
+    res.json({ success: true });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 

@@ -2,8 +2,8 @@ const router  = require('express').Router();
 const crypto  = require('crypto');
 const { query }    = require('../db');
 const { requireAuth, requireRole } = require('../middleware/auth');
-const { sendOTP }  = require('../services/email');
-const { processPDF } = require('../services/pdf');
+const { sendOTP }  = require('../utils/mailer');
+const { processPDF } = require('../utils/watermark');
 const path = require('path');
 const fs   = require('fs');
 
